@@ -22,6 +22,7 @@ type GitHubAdapter struct {
 	lastSync     time.Time
 	repositories []string
 	mappings     map[string]string // repository -> knowledge_id mapping
+	lastCommits  map[string]string // repository -> last commit hash
 }
 
 // NewGitHubAdapter creates a new GitHub adapter
@@ -60,6 +61,7 @@ func NewGitHubAdapter(cfg config.GitHubConfig) (*GitHubAdapter, error) {
 		repositories: repos,
 		mappings:     mappings,
 		lastSync:     time.Now().Add(-24 * time.Hour), // Default to 24 hours ago
+		lastCommits:  make(map[string]string),
 	}, nil
 }
 
@@ -96,6 +98,19 @@ func (g *GitHubAdapter) fetchRepositoryFiles(ctx context.Context, repo string, k
 
 	owner, repoName := parts[0], parts[1]
 
+	// Check for updates via latest commit
+	latestCommit, err := g.getLatestCommit(ctx, owner, repoName)
+	if err != nil {
+		logrus.Warnf("Failed to get latest commit for %s: %v. Proceeding with full fetch.", repo, err)
+	} else {
+		// If we have a stored commit and it matches the latest, skip fetch
+		if lastCommit, ok := g.lastCommits[repo]; ok && lastCommit == latestCommit {
+			logrus.Debugf("Repository %s is up to date (commit: %s). Skipping fetch.", repo, latestCommit)
+			return []*File{}, nil
+		}
+		logrus.Debugf("Repository %s has updates (old: %s, new: %s). Fetching files.", repo, g.lastCommits[repo], latestCommit)
+	}
+
 	// Get repository contents
 	_, contents, _, err := g.client.Repositories.GetContents(ctx, owner, repoName, "", nil)
 	if err != nil {
@@ -113,7 +128,27 @@ func (g *GitHubAdapter) fetchRepositoryFiles(ctx context.Context, repo string, k
 		}
 	}
 
+	// Update the last commit hash after successful fetch
+	if latestCommit != "" {
+		g.lastCommits[repo] = latestCommit
+	}
+
 	return files, nil
+}
+
+// getLatestCommit retrieves the SHA of the latest commit on the default branch
+func (g *GitHubAdapter) getLatestCommit(ctx context.Context, owner, repo string) (string, error) {
+	opts := &github.CommitsListOptions{
+		ListOptions: github.ListOptions{PerPage: 1},
+	}
+	commits, _, err := g.client.Repositories.ListCommits(ctx, owner, repo, opts)
+	if err != nil {
+		return "", err
+	}
+	if len(commits) == 0 {
+		return "", fmt.Errorf("no commits found")
+	}
+	return commits[0].GetSHA(), nil
 }
 
 // processContent processes a GitHub content item recursively
