@@ -76,14 +76,14 @@ type JiraComments struct {
 	Comments []JiraComment `json:"comments,omitempty"`
 }
 type JiraComment struct {
-	Self         string   `json:"self"`
-	ID           string   `json:"id"`
-	Author       JiraUser `json:"author"`
-	Body         JiraBody `json:"body"`
-	UpdateAuthor JiraUser `json:"updateAuthor"`
-	Created      string   `json:"created"`
-	Updated      string   `json:"updated"`
-	JsdPublic    bool     `json:"jsdPublic"`
+	Self         string      `json:"self"`
+	ID           string      `json:"id"`
+	Author       JiraUser    `json:"author"`
+	Body         interface{} `json:"body"` // Can be string (API v2) or JiraBody object (API v3)
+	UpdateAuthor JiraUser    `json:"updateAuthor"`
+	Created      string      `json:"created"`
+	Updated      string      `json:"updated"`
+	JsdPublic    bool        `json:"jsdPublic"`
 }
 type JiraBody struct {
 	Type    string      `json:"type"`
@@ -316,6 +316,15 @@ func (j *JiraAdapter) getAPIBase() string {
 	return "/rest/api/3"
 }
 
+// setAuth sets the authentication header based on the configuration type
+func (j *JiraAdapter) setAuth(req *http.Request) {
+	if j.config.Type == "datacenter" {
+		req.Header.Set("Authorization", "Bearer "+j.config.APIKey)
+	} else {
+		req.SetBasicAuth(j.config.Username, j.config.APIKey)
+	}
+}
+
 // FetchFiles fetches all issues from the configured Jira projects
 func (j *JiraAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 	var allFiles []*File
@@ -344,10 +353,7 @@ func (j *JiraAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 		}
 	}
 
-	j.lastSync = time.Now()
-	if err := j.saveState(); err != nil {
-		logrus.Warnf("Failed to save Jira state: %v", err)
-	}
+	// State is NOT saved here - it will be saved by SetLastSync when sync manager confirms successful sync
 	return allFiles, nil
 }
 
@@ -432,7 +438,6 @@ func (j *JiraAdapter) fetchAllIssueIDs(ctx context.Context, projectKey string) (
 	var issueIDs []string
 	startAt := 0
 	maxResults := 100
-	nextPageToken := ""
 	limit := j.config.PageLimit
 	if limit <= 0 {
 		limit = 100 // Default limit
@@ -441,7 +446,7 @@ func (j *JiraAdapter) fetchAllIssueIDs(ctx context.Context, projectKey string) (
 		maxResults = limit
 	}
 	for {
-		logrus.Debugf("Limit: %d, MaxResults: %d", limit, maxResults)
+		logrus.Debugf("Limit: %d, MaxResults: %d, StartAt: %d", limit, maxResults, startAt)
 		// Build JQL query to fetch issues from the project
 		jqlQuery := fmt.Sprintf("project = '%s'", projectKey)
 
@@ -453,9 +458,9 @@ func (j *JiraAdapter) fetchAllIssueIDs(ctx context.Context, projectKey string) (
 			logrus.Debugf("Using incremental update for project %s since %s", projectKey, lastMod)
 		}
 
-		// Build URL for search endpoint with pagination - following the exact API specification
-		url := fmt.Sprintf("%s%s/search/jql?jql=%s&maxResults=%d&fields=id%s",
-			j.config.BaseURL, j.getAPIBase(), url.QueryEscape(jqlQuery), maxResults, nextPageToken)
+		// Build URL for search endpoint with pagination using startAt (works for both API v2 and v3)
+		url := fmt.Sprintf("%s%s/search?jql=%s&maxResults=%d&startAt=%d&fields=id",
+			j.config.BaseURL, j.getAPIBase(), url.QueryEscape(jqlQuery), maxResults, startAt)
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
@@ -463,7 +468,7 @@ func (j *JiraAdapter) fetchAllIssueIDs(ctx context.Context, projectKey string) (
 		}
 
 		// Set authentication
-		req.SetBasicAuth(j.config.Username, j.config.APIKey)
+		j.setAuth(req)
 		req.Header.Set("Accept", "application/json")
 
 		logrus.Debugf("Jira search API URL: %s", url)
@@ -482,9 +487,9 @@ func (j *JiraAdapter) fetchAllIssueIDs(ctx context.Context, projectKey string) (
 			Issues []struct {
 				ID string `json:"id"`
 			} `json:"issues"`
-
-			IsLast        bool   `json:"isLast"`
-			NextPageToken string `json:"nextPageToken,omitempty"`
+			StartAt    int `json:"startAt"`
+			MaxResults int `json:"maxResults"`
+			Total      int `json:"total"`
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
@@ -498,13 +503,11 @@ func (j *JiraAdapter) fetchAllIssueIDs(ctx context.Context, projectKey string) (
 			issueIDs = append(issueIDs, issue.ID)
 		}
 
-		if response.IsLast || len(issueIDs) >= limit {
+		// Check if we've fetched all results or reached the limit
+		startAt += len(response.Issues)
+		if startAt >= response.Total || len(issueIDs) >= limit || len(response.Issues) == 0 {
 			break
-		} else {
-			nextPageToken = fmt.Sprintf(`&nextPageToken=%s`, response.NextPageToken)
 		}
-		// Check if there are more results
-		startAt += maxResults
 	}
 
 	return issueIDs, nil
@@ -524,7 +527,7 @@ func (j *JiraAdapter) fetchIssue(ctx context.Context, issueID string) (JiraIssue
 	}
 
 	// Set authentication
-	req.SetBasicAuth(j.config.Username, j.config.APIKey)
+	j.setAuth(req)
 	req.Header.Set("Accept", "application/json")
 
 	logrus.Debugf("Jira issue API URL: %s", url)
@@ -562,7 +565,7 @@ func (j *JiraAdapter) fetchProject(ctx context.Context, projectKey string) (Jira
 	}
 
 	// Set authentication
-	req.SetBasicAuth(j.config.Username, j.config.APIKey)
+	j.setAuth(req)
 	req.Header.Set("Accept", "application/json")
 
 	logrus.Debugf("Jira project API URL: %s", url)
@@ -673,7 +676,11 @@ func (j *JiraAdapter) GetLastSync() time.Time {
 	return j.lastSync
 }
 
-// SetLastSync sets the last sync time
+// SetLastSync sets the last sync time and persists state to disk
+// This is called by the sync manager after files are successfully synced to OpenWebUI
 func (j *JiraAdapter) SetLastSync(t time.Time) {
 	j.lastSync = t
+	if err := j.saveState(); err != nil {
+		logrus.Warnf("Failed to save Jira state: %v", err)
+	}
 }

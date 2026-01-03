@@ -28,7 +28,7 @@ func (j *JiraAdapter) fetchComment(ctx context.Context, commentURL string) (*Com
 	}
 
 	// Set authentication
-	req.SetBasicAuth(j.config.Username, j.config.APIKey)
+	j.setAuth(req)
 	req.Header.Set("Accept", "application/json")
 
 	logrus.Debugf("Jira comment API URL: %s", url)

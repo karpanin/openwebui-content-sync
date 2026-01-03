@@ -134,12 +134,9 @@ func (g *GitLabAdapter) fetchRepositoryFiles(ctx context.Context, repo string, k
 		return nil, err
 	}
 
-	// Update the last commit hash after successful fetch
+	// Update the last commit hash after successful fetch (will be persisted via SetLastSync)
 	if latestCommit != "" {
 		g.lastCommits[repo] = latestCommit
-		if err := g.saveState(); err != nil {
-			logrus.Warnf("Failed to save GitLab state: %v", err)
-		}
 	}
 
 	return files, nil
@@ -299,9 +296,13 @@ func (g *GitLabAdapter) GetLastSync() time.Time {
 	return g.lastSync
 }
 
-// SetLastSync updates the last sync timestamp
+// SetLastSync updates the last sync timestamp and persists state to disk
+// This is called by the sync manager after files are successfully synced to OpenWebUI
 func (g *GitLabAdapter) SetLastSync(t time.Time) {
 	g.lastSync = t
+	if err := g.saveState(); err != nil {
+		logrus.Warnf("Failed to save GitLab state: %v", err)
+	}
 }
 
 // isGitLabTextFile checks if a file is likely to be a text file

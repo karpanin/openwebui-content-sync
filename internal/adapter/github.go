@@ -145,12 +145,9 @@ func (g *GitHubAdapter) fetchRepositoryFiles(ctx context.Context, repo string, k
 		}
 	}
 
-	// Update the last commit hash after successful fetch
+	// Update the last commit hash after successful fetch (will be persisted via SetLastSync)
 	if latestCommit != "" {
 		g.lastCommits[repo] = latestCommit
-		if err := g.saveState(); err != nil {
-			logrus.Warnf("Failed to save GitHub state: %v", err)
-		}
 	}
 
 	return files, nil
@@ -375,7 +372,11 @@ func (g *GitHubAdapter) GetLastSync() time.Time {
 	return g.lastSync
 }
 
-// SetLastSync updates the last sync timestamp
+// SetLastSync updates the last sync timestamp and persists state to disk
+// This is called by the sync manager after files are successfully synced to OpenWebUI
 func (g *GitHubAdapter) SetLastSync(t time.Time) {
 	g.lastSync = t
+	if err := g.saveState(); err != nil {
+		logrus.Warnf("Failed to save GitHub state: %v", err)
+	}
 }

@@ -446,9 +446,7 @@ func (c *ConfluenceAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 	}
 
 	c.lastSync = time.Now()
-	if err := c.saveState(); err != nil {
-		logrus.Warnf("Failed to save Confluence state: %v", err)
-	}
+	// State is NOT saved here - it will be saved by SetLastSync when sync manager confirms successful sync
 	return allFiles, nil
 }
 
@@ -1187,9 +1185,13 @@ func (c *ConfluenceAdapter) GetLastSync() time.Time {
 	return c.lastSync
 }
 
-// SetLastSync sets the last sync time
+// SetLastSync sets the last sync time and persists state to disk
+// This is called by the sync manager after files are successfully synced to OpenWebUI
 func (c *ConfluenceAdapter) SetLastSync(t time.Time) {
 	c.lastSync = t
+	if err := c.saveState(); err != nil {
+		logrus.Warnf("Failed to save Confluence state: %v", err)
+	}
 }
 
 // fetchUsersByIds fetches user information for multiple account IDs using the bulk API
