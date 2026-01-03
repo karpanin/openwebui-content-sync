@@ -68,6 +68,30 @@ func TestNewConfluenceAdapter(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "datacenter valid config (no username)",
+			config: config.ConfluenceConfig{
+				Type:    "datacenter",
+				BaseURL: "https://dc.example.com",
+				APIKey:  "pat-token",
+				SpaceMappings: []config.SpaceMapping{
+					{SpaceKey: "TEST", KnowledgeID: "knowledge-id"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "datacenter missing API key",
+			config: config.ConfluenceConfig{
+				Type:     "datacenter",
+				BaseURL:  "https://dc.example.com",
+				Username: "test", // Username present but API key missing check
+				SpaceMappings: []config.SpaceMapping{
+					{SpaceKey: "TEST", KnowledgeID: "knowledge-id"},
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -148,6 +172,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{"file\"with\"quotes.txt", "file_with_quotes.txt"},
 		{"file<with>brackets.txt", "file_with_brackets.txt"},
 		{"file|with|pipes.txt", "file_with_pipes.txt"},
+		{"Русское название файла.txt", "русское_название_файла.txt"},
 		{"very-long-filename-that-should-be-truncated-because-it-exceeds-the-maximum-length-limit-of-one-hundred-characters.txt", "very-long-filename-that-should-be-truncated-because-it-exceeds-the-maximum-length-limit-of-one-hundr"},
 	}
 

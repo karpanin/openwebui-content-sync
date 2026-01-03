@@ -202,7 +202,7 @@ func NewConfluenceAdapter(cfg config.ConfluenceConfig) (*ConfluenceAdapter, erro
 	if cfg.BaseURL == "" {
 		return nil, fmt.Errorf("confluence base URL is required")
 	}
-	if cfg.Username == "" {
+	if cfg.Username == "" && cfg.Type != "datacenter" {
 		return nil, fmt.Errorf("confluence username is required")
 	}
 	if cfg.APIKey == "" {
@@ -254,6 +254,16 @@ func NewConfluenceAdapter(cfg config.ConfluenceConfig) (*ConfluenceAdapter, erro
 // Name returns the adapter name
 func (c *ConfluenceAdapter) Name() string {
 	return "confluence"
+}
+
+// setAuth sets the authentication header based on the configuration type
+func (c *ConfluenceAdapter) setAuth(req *http.Request) {
+	if c.config.Type == "datacenter" {
+		req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	} else {
+		// Set authentication
+		c.setAuth(req)
+	}
 }
 
 // FetchFiles fetches files from all configured Confluence spaces and parent pages
@@ -319,7 +329,7 @@ func (c *ConfluenceAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 			logrus.Debugf("Space %s has ID: %s", spaceKey, spaceID)
 
 			// Step 2: Fetch pages from the space
-			pages, err := c.fetchSpacePages(ctx, spaceID)
+			pages, err := c.fetchSpacePages(ctx, spaceID, spaceKey)
 			if err != nil {
 				logrus.Errorf("Failed to fetch pages from space %s: %v", spaceKey, err)
 				continue
@@ -340,7 +350,7 @@ func (c *ConfluenceAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 
 			// Step 4: Fetch blog posts from the space
 			if c.config.IncludeBlogPosts {
-				blogposts, err := c.fetchSpaceBlogposts(ctx, spaceID)
+				blogposts, err := c.fetchSpaceBlogposts(ctx, spaceID, spaceKey)
 				if err != nil {
 					logrus.Errorf("Failed to fetch blog posts from space %s: %v", spaceKey, err)
 					continue
@@ -367,6 +377,10 @@ func (c *ConfluenceAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 
 // getSpaceID retrieves the space ID from the space key
 func (c *ConfluenceAdapter) getSpaceID(ctx context.Context, spaceKey string) (string, error) {
+	if c.config.Type == "datacenter" {
+		return c.getSpaceIDV1(ctx, spaceKey)
+	}
+
 	// URL encode the space key
 	encodedSpaceKey := url.QueryEscape(spaceKey)
 	url := fmt.Sprintf("%s/wiki/api/v2/spaces?keys=%s", c.config.BaseURL, encodedSpaceKey)
@@ -377,7 +391,7 @@ func (c *ConfluenceAdapter) getSpaceID(ctx context.Context, spaceKey string) (st
 	}
 
 	// Set authentication
-	req.SetBasicAuth(c.config.Username, c.config.APIKey)
+	c.setAuth(req)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "OpenWebUI-Content-Sync/1.0")
 
@@ -411,7 +425,11 @@ func (c *ConfluenceAdapter) getSpaceID(ctx context.Context, spaceKey string) (st
 }
 
 // fetchSpacePages fetches all pages from a space using space ID
-func (c *ConfluenceAdapter) fetchSpacePages(ctx context.Context, spaceID string) ([]ConfluencePage, error) {
+func (c *ConfluenceAdapter) fetchSpacePages(ctx context.Context, spaceID, spaceKey string) ([]ConfluencePage, error) {
+	if c.config.Type == "datacenter" {
+		return c.fetchSpacePagesV1(ctx, spaceKey)
+	}
+
 	var allPages []ConfluencePage
 	limit := c.config.PageLimit
 	if limit <= 0 {
@@ -427,7 +445,7 @@ func (c *ConfluenceAdapter) fetchSpacePages(ctx context.Context, spaceID string)
 		}
 
 		// Set authentication
-		req.SetBasicAuth(c.config.Username, c.config.APIKey)
+		c.setAuth(req)
 		req.Header.Set("Accept", "application/json")
 
 		logrus.Debugf("Confluence pages API URL: %s", url)
@@ -515,7 +533,7 @@ func (c *ConfluenceAdapter) fetchPageByID(ctx context.Context, pageID string) (C
 	}
 
 	// Set authentication
-	req.SetBasicAuth(c.config.Username, c.config.APIKey)
+	c.setAuth(req)
 	req.Header.Set("Accept", "application/json")
 
 	logrus.Debugf("Confluence page API URL: %s", url)
@@ -556,7 +574,7 @@ func (c *ConfluenceAdapter) fetchSubPages(ctx context.Context, parentPageID stri
 		}
 
 		// Set authentication
-		req.SetBasicAuth(c.config.Username, c.config.APIKey)
+		c.setAuth(req)
 		req.Header.Set("Accept", "application/json")
 
 		logrus.Debugf("Confluence sub-pages API URL: %s", url)
@@ -628,7 +646,12 @@ func (c *ConfluenceAdapter) processPage(ctx context.Context, page ConfluencePage
 			webuiLink = webuiStr
 		}
 	}
-	metaData := fmt.Sprintf("---\nAuthor: %s\nCreatedAt: %s\nLinkToPage: %s\nTitle: %s\n---", page.AuthorDisplayName, page.CreatedAt, c.config.BaseURL+"/wiki"+webuiLink, page.Title)
+	// Determine link prefix based on configuration type
+	linkPrefix := c.config.BaseURL + "/wiki"
+	if c.config.Type == "datacenter" {
+		linkPrefix = c.config.BaseURL
+	}
+	metaData := fmt.Sprintf("---\nAuthor: %s\nCreatedAt: %s\nLinkToPage: %s\nTitle: %s\n---", page.AuthorDisplayName, page.CreatedAt, linkPrefix+webuiLink, page.Title)
 	content := fmt.Sprintf("%s\n\n%s", metaData, pageBody)
 
 	// Create file content
@@ -651,6 +674,10 @@ func (c *ConfluenceAdapter) processPage(ctx context.Context, page ConfluencePage
 
 // fetchPageBody fetches the body content of a specific page
 func (c *ConfluenceAdapter) fetchPageBody(ctx context.Context, pageID string) (string, error) {
+	if c.config.Type == "datacenter" {
+		return c.fetchPageBodyV1(ctx, pageID)
+	}
+
 	url := fmt.Sprintf("%s/wiki/api/v2/pages/%s?body-format=export_view", c.config.BaseURL, pageID)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -659,7 +686,7 @@ func (c *ConfluenceAdapter) fetchPageBody(ctx context.Context, pageID string) (s
 	}
 
 	// Set authentication
-	req.SetBasicAuth(c.config.Username, c.config.APIKey)
+	c.setAuth(req)
 	req.Header.Set("Accept", "application/json")
 
 	logrus.Debugf("Confluence page body API URL: %s", url)
@@ -691,7 +718,11 @@ func (c *ConfluenceAdapter) fetchPageBody(ctx context.Context, pageID string) (s
 }
 
 // fetchSpaceBlogposts fetches all blog posts from a space using space ID
-func (c *ConfluenceAdapter) fetchSpaceBlogposts(ctx context.Context, spaceID string) ([]ConfluenceBlogPost, error) {
+func (c *ConfluenceAdapter) fetchSpaceBlogposts(ctx context.Context, spaceID, spaceKey string) ([]ConfluenceBlogPost, error) {
+	if c.config.Type == "datacenter" {
+		return c.fetchSpaceBlogpostsV1(ctx, spaceKey)
+	}
+
 	var allBlogposts []ConfluenceBlogPost
 	limit := c.config.PageLimit
 	if limit <= 0 {
@@ -707,7 +738,7 @@ func (c *ConfluenceAdapter) fetchSpaceBlogposts(ctx context.Context, spaceID str
 		}
 
 		// Set authentication
-		req.SetBasicAuth(c.config.Username, c.config.APIKey)
+		c.setAuth(req)
 		req.Header.Set("Accept", "application/json")
 
 		logrus.Debugf("Confluence blogposts API URL: %s", url)
@@ -794,7 +825,7 @@ func (c *ConfluenceAdapter) fetchBlogpostByID(ctx context.Context, blogpostID st
 	}
 
 	// Set authentication
-	req.SetBasicAuth(c.config.Username, c.config.APIKey)
+	c.setAuth(req)
 	req.Header.Set("Accept", "application/json")
 
 	logrus.Debugf("Confluence blogpost API URL: %s", url)
@@ -841,7 +872,12 @@ func (c *ConfluenceAdapter) processBlogpost(ctx context.Context, blogpost Conflu
 			webuiLink = webuiStr
 		}
 	}
-	metaData := fmt.Sprintf("Author: %s\nCreatedAt: %s\nLinkToPage: %s", blogpost.AuthorDisplayName, blogpost.CreatedAt, c.config.BaseURL+"/wiki"+webuiLink)
+	// Determine link prefix based on configuration type
+	linkPrefix := c.config.BaseURL + "/wiki"
+	if c.config.Type == "datacenter" {
+		linkPrefix = c.config.BaseURL
+	}
+	metaData := fmt.Sprintf("Author: %s\nCreatedAt: %s\nLinkToPage: %s", blogpost.AuthorDisplayName, blogpost.CreatedAt, linkPrefix+webuiLink)
 
 	content := fmt.Sprintf("%s\n\n%s", metaData, blogpostBody)
 
@@ -873,7 +909,7 @@ func (c *ConfluenceAdapter) fetchBlogpostBody(ctx context.Context, blogpostID st
 	}
 
 	// Set authentication
-	req.SetBasicAuth(c.config.Username, c.config.APIKey)
+	c.setAuth(req)
 	req.Header.Set("Accept", "application/json")
 
 	logrus.Debugf("Confluence blogpost body API URL: %s", url)
@@ -989,8 +1025,10 @@ func (c *ConfluenceAdapter) SanitizeFilename(title string) string {
 	// Convert to lowercase and replace spaces with underscores
 	filename := strings.ToLower(title)
 
-	// Replace special characters with underscores (but preserve dots for extensions)
-	reg := regexp.MustCompile(`[^a-z0-9\s_.-]`)
+	// Replace invalid characters with underscores
+	// Keep letters, numbers, spaces, underscores, dots, and hyphens
+	// This supports unicode characters (including Cyrillic)
+	reg := regexp.MustCompile(`[^\p{L}\p{N}\s_.-]`)
 	filename = reg.ReplaceAllString(filename, "_")
 
 	// Replace spaces and multiple underscores with single underscore
@@ -1000,9 +1038,10 @@ func (c *ConfluenceAdapter) SanitizeFilename(title string) string {
 	// Remove leading/trailing underscores
 	filename = strings.Trim(filename, "_")
 
-	// Limit length to 100 characters
-	if len(filename) > 100 {
-		filename = filename[:100]
+	// Limit length to 100 characters (runes, not bytes to respect unicode)
+	runes := []rune(filename)
+	if len(runes) > 100 {
+		filename = string(runes[:100])
 	}
 
 	// Ensure it's not empty
@@ -1046,7 +1085,8 @@ func (c *ConfluenceAdapter) fetchUsersByIds(ctx context.Context, accountIds []st
 	}
 
 	// Set authentication and headers
-	req.SetBasicAuth(c.config.Username, c.config.APIKey)
+	// Set authentication
+	c.setAuth(req)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 

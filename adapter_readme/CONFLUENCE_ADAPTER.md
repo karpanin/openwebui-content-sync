@@ -4,11 +4,22 @@ The Confluence adapter allows you to sync content from Atlassian Confluence spac
 
 ## API Compatibility
 
-This adapter uses Confluence REST API v2, which provides:
+This adapter supports both:
+- **Confluence Cloud** (REST API v2)
+- **Confluence Data Center** (REST API v1)
+
+It automatically switches between API versions based on the configuration type.
+
+For **Cloud** (API v2), it provides:
 - Modern cursor-based pagination
 - Improved performance and reliability
 - Better support for large spaces
 - Enhanced metadata and content structure
+
+For **Data Center** (API v1), it provides:
+- Support for on-premise installations
+- Integration via Personal Access Tokens (PAT)
+- Page and Blog Post synchronization
 
 ## Features
 
@@ -29,6 +40,7 @@ Add the following to your `config.yaml`:
 ```yaml
 confluence:
   enabled: true
+  type: "cloud" # or "datacenter"
   base_url: "https://your-domain.atlassian.net"
   username: "your-email@example.com"
   api_key: "your-confluence-api-key"
@@ -89,18 +101,27 @@ data:
 
 ## Authentication
 
-The Confluence adapter uses Basic Authentication with your Confluence username and API key. To get an API key:
-
+### Confluence Cloud
+Uses **Basic Authentication** with username (email) and API Token.
 1. Go to [Atlassian Account Settings](https://id.atlassian.com/manage-profile/security/api-tokens)
 2. Click "Create API token"
 3. Give it a label and copy the generated token
-4. Use your email address as the username and the token as the API key
+4. Use your email address as the `username` and the token as the `api_key`
+
+### Confluence Data Center
+Uses **Bearer Token Authentication** with a Personal Access Token (PAT).
+1. Go to your User Profile -> Settings -> Personal Access Tokens
+2. Create a token
+3. Use this token as the `api_key`
+4. `type` must be set to `datacenter`
+5. `username` is optional/ignored for PAT authentication
 
 ## Configuration Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `enabled` | boolean | No | `false` | Enable the Confluence adapter |
+| `type` | string | No | `cloud` | Type of Confluence instance: `cloud` or `datacenter` |
 | `base_url` | string | Yes | - | Your Confluence instance URL (e.g., `https://your-domain.atlassian.net`) |
 | `username` | string | Yes | - | Your Confluence username (usually your email) |
 | `api_key` | string | Yes | - | Your Confluence API key |

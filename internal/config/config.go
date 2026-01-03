@@ -70,6 +70,7 @@ type GitHubConfig struct {
 
 // ConfluenceConfig defines Confluence adapter settings
 type ConfluenceConfig struct {
+	Type               string              `yaml:"type"`                 // "cloud" or "datacenter" (default: "cloud")
 	Enabled            bool                `yaml:"enabled"`
 	BaseURL            string              `yaml:"base_url"`
 	Username           string              `yaml:"username"`
@@ -154,6 +155,7 @@ func Load(path string) (*Config, error) {
 			Mappings: []RepositoryMapping{},
 		},
 		Confluence: ConfluenceConfig{
+			Type:               "cloud",
 			Enabled:            false,
 			BaseURL:            "",
 			Username:           "",

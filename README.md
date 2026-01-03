@@ -150,21 +150,24 @@ confluence:
   base_url: "https://your-domain.atlassian.net"
   username: "your-email@example.com"
   api_key: "your-confluence-api-key"
-  
+
   # Space mappings (per-space knowledge IDs)
   space_mappings:
     - space_key: "DOCS"
       knowledge_id: "docs-knowledge-base"
     - space_key: "PRODUCT"
       knowledge_id: "product-knowledge-base"
-  
+
+  # Optional: Set type to "datacenter" for on-premise instances (default: "cloud")
+  # type: "datacenter"
+
   # Parent page mappings (per-parent-page knowledge IDs)
   parent_page_mappings:
     - parent_page_id: "1234567890"
       knowledge_id: "parent-page-knowledge-base"
     - parent_page_id: "0987654321"
       knowledge_id: "another-parent-page-knowledge-base"
-  
+
   page_limit: 100  # Maximum pages to fetch per space (0 = no limit)
   include_attachments: true  # Whether to download and sync page attachments
 ```
