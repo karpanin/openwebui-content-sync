@@ -100,7 +100,7 @@ func main() {
 	}
 	// Add Jira adapter if configured
 	if cfg.Jira.Enabled {
-		jiraAdapter, err := adapter.NewJiraAdapter(cfg.Jira)
+		jiraAdapter, err := adapter.NewJiraAdapter(cfg.Jira, cfg.Storage.Path)
 		if err != nil {
 			logrus.Fatalf("Failed to create Jira adapter: %v", err)
 		}

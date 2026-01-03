@@ -135,6 +135,7 @@ type JiraProjectMapping struct {
 
 // JiraConfig defines Jira adapter settings
 type JiraConfig struct {
+	Type            string               `yaml:"type"` // "cloud" or "datacenter" (default: "cloud")
 	Enabled         bool                 `yaml:"enabled"`
 	BaseURL         string               `yaml:"base_url"`
 	Username        string               `yaml:"username"`
@@ -184,6 +185,7 @@ func Load(path string) (*Config, error) {
 			IncludeBlogPosts:   false,
 		},
 		Jira: JiraConfig{
+			Type:            "cloud",
 			Enabled:         false,
 			BaseURL:         "",
 			Username:        "",
@@ -240,7 +242,7 @@ func Load(path string) (*Config, error) {
 	cfg.GitLab.Token = getEnv("GITLAB_TOKEN", cfg.GitLab.Token)
 	cfg.GitLab.BaseURL = getEnv("GITLAB_BASE_URL", cfg.GitLab.BaseURL)
 	cfg.Confluence.APIKey = getEnv("CONFLUENCE_API_KEY", cfg.Confluence.APIKey)
-	cfg.Jira.APIKey = getEnv("CONFLUENCE_API_KEY", cfg.Jira.APIKey)
+	cfg.Jira.APIKey = getEnv("JIRA_API_KEY", cfg.Jira.APIKey)
 	cfg.Storage.Path = getEnv("STORAGE_PATH", cfg.Storage.Path)
 
 	fmt.Printf("Final OpenWebUI BaseURL: %s\n", cfg.OpenWebUI.BaseURL)

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
@@ -25,6 +27,12 @@ type JiraAdapter struct {
 	lastSync time.Time
 	projects []string
 	mappings map[string]string // project_key -> knowledge_id mapping
+	storagePath string
+}
+
+// JiraState represents the persisted state of the Jira adapter
+type JiraState struct {
+	LastSync time.Time `json:"last_sync"`
 }
 
 // JiraIssue represents a Jira issue from the API
@@ -247,7 +255,7 @@ type JiraIssueOperation struct {
 }
 
 // NewJiraAdapter creates a new Jira adapter
-func NewJiraAdapter(cfg config.JiraConfig) (*JiraAdapter, error) {
+func NewJiraAdapter(cfg config.JiraConfig, storagePath string) (*JiraAdapter, error) {
 	if cfg.BaseURL == "" {
 		return nil, fmt.Errorf("jira base URL is required")
 	}
@@ -278,18 +286,34 @@ func NewJiraAdapter(cfg config.JiraConfig) (*JiraAdapter, error) {
 		Timeout: 30 * time.Second,
 	}
 
-	return &JiraAdapter{
-		client:   client,
-		config:   cfg,
-		projects: projects,
-		mappings: mappings,
-		lastSync: time.Now(),
-	}, nil
+	adapter := &JiraAdapter{
+		client:      client,
+		config:      cfg,
+		projects:    projects,
+		mappings:    mappings,
+		lastSync:    time.Time{}, // Zero time initially
+		storagePath: storagePath,
+	}
+
+	// Load state from disk
+	if err := adapter.loadState(); err != nil {
+		logrus.Warnf("Failed to load Jira adapter state: %v", err)
+	}
+
+	return adapter, nil
 }
 
 // Name returns the adapter name
 func (j *JiraAdapter) Name() string {
 	return "jira"
+}
+
+// getAPIBase returns the API base path based on configuration
+func (j *JiraAdapter) getAPIBase() string {
+	if j.config.Type == "datacenter" {
+		return "/rest/api/2"
+	}
+	return "/rest/api/3"
 }
 
 // FetchFiles fetches all issues from the configured Jira projects
@@ -321,7 +345,63 @@ func (j *JiraAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 	}
 
 	j.lastSync = time.Now()
+	if err := j.saveState(); err != nil {
+		logrus.Warnf("Failed to save Jira state: %v", err)
+	}
 	return allFiles, nil
+}
+
+// loadState loads the adapter state from disk
+func (j *JiraAdapter) loadState() error {
+	if j.storagePath == "" {
+		return nil
+	}
+
+	statePath := filepath.Join(j.storagePath, "jira_state.json")
+	if _, err := os.Stat(statePath); os.IsNotExist(err) {
+		return nil
+	}
+
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return err
+	}
+
+	var state JiraState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+
+	if !state.LastSync.IsZero() {
+		j.lastSync = state.LastSync
+	}
+
+	logrus.Debugf("Loaded Jira state: last sync %v", j.lastSync)
+	return nil
+}
+
+// saveState saves the adapter state to disk
+func (j *JiraAdapter) saveState() error {
+	if j.storagePath == "" {
+		return nil
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(j.storagePath, 0755); err != nil {
+		return err
+	}
+
+	state := JiraState{
+		LastSync: j.lastSync,
+	}
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	statePath := filepath.Join(j.storagePath, "jira_state.json")
+	return os.WriteFile(statePath, data, 0644)
 }
 
 // fetchIssues fetches all issues from a Jira project using search endpoint and individual issue fetching
@@ -365,9 +445,17 @@ func (j *JiraAdapter) fetchAllIssueIDs(ctx context.Context, projectKey string) (
 		// Build JQL query to fetch issues from the project
 		jqlQuery := fmt.Sprintf("project = '%s'", projectKey)
 
+		// Add incremental update filter if lastSync is set
+		if !j.lastSync.IsZero() {
+			// Jira expects "yyyy/MM/dd HH:mm" or "yyyy-MM-dd HH:mm"
+			lastMod := j.lastSync.Format("2006-01-02 15:04")
+			jqlQuery += fmt.Sprintf(" AND updated >= '%s'", lastMod)
+			logrus.Debugf("Using incremental update for project %s since %s", projectKey, lastMod)
+		}
+
 		// Build URL for search endpoint with pagination - following the exact API specification
-		url := fmt.Sprintf("%s/rest/api/3/search/jql?jql=%s&maxResults=%d&fields=id%s",
-			j.config.BaseURL, url.QueryEscape(jqlQuery), maxResults, nextPageToken)
+		url := fmt.Sprintf("%s%s/search/jql?jql=%s&maxResults=%d&fields=id%s",
+			j.config.BaseURL, j.getAPIBase(), url.QueryEscape(jqlQuery), maxResults, nextPageToken)
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
@@ -427,7 +515,8 @@ func (j *JiraAdapter) fetchIssue(ctx context.Context, issueID string) (JiraIssue
 	var issue JiraIssue
 
 	// Build URL for individual issue fetch
-	url := fmt.Sprintf("%s/rest/api/3/issue/%s?expand=renderedFields&name&fields=summary,description,parent,issuetype,reporter,status,comment", j.config.BaseURL, issueID)
+	// Build URL for individual issue fetch
+	url := fmt.Sprintf("%s%s/issue/%s?expand=renderedFields&name&fields=summary,description,parent,issuetype,reporter,status,comment", j.config.BaseURL, j.getAPIBase(), issueID)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -464,7 +553,8 @@ func (j *JiraAdapter) fetchProject(ctx context.Context, projectKey string) (Jira
 	var project JiraProject
 
 	// Build URL for project fetch
-	url := fmt.Sprintf("%s/rest/api/3/project/%s", j.config.BaseURL, projectKey)
+	// Build URL for project fetch
+	url := fmt.Sprintf("%s%s/project/%s", j.config.BaseURL, j.getAPIBase(), projectKey)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {

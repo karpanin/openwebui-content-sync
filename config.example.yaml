@@ -111,9 +111,10 @@ slack:
 # Jira adapter configuration
 jira:
   enabled: false
+  type: "cloud" # Options: "cloud" (default), "datacenter"
   base_url: "https://your-domain.atlassian.net"  # Your Jira instance URL
-  username: "your-email@example.com"  # Your Jira username (usually email)
-  api_key: ""  # Set via JIRA_API_KEY environment variable
+  username: "your-email@example.com"  # Your Jira username (email for Cloud, username for Data Center)
+  api_key: ""  # Set via JIRA_API_KEY environment variable. Use API Token for Cloud, Password/PAT for Data Center.
   page_limit: 100  # Maximum pages to fetch per space (0 = no limit)
 
   project_mappings:
