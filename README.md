@@ -8,7 +8,7 @@ This project is licensed under the Apache License v2.0 - see the [LICENSE](LICEN
 
 ## Features
 
-- **Multi-Source Support**: GitHub repositories, Confluence spaces, and local folders
+- **Multi-Source Support**: GitHub repositories, GitLab projects, Confluence spaces, and local folders
 - **Adapter Architecture**: Pluggable adapters for different data sources
 - **File Diffing**: Only syncs changed files based on content hashing
 - **Persistent Storage**: Uses Kubernetes persistent volumes for local file storage
@@ -135,6 +135,32 @@ INFO[0001] Successfully synced file: README.md
 INFO[0001] Successfully synced file: package.json
 INFO[0001] Successfully synced file: src/index.js
 ```
+
+### GitLab Adapter
+
+The GitLab adapter syncs files from GitLab repositories (Cloud or On-Premise) to OpenWebUI knowledge bases.
+
+#### GitLab Configuration
+
+Map different repositories to different knowledge bases:
+
+```yaml
+gitlab:
+  enabled: true
+  # base_url: "https://gitlab.example.com" # Optional: for on-premise
+  token: "glpat-your-token"
+  mappings:
+    - repository: "group/project"
+      knowledge_id: "gitlab-knowledge-base"
+```
+
+#### GitLab Features
+
+- **Project Sync**: Syncs all files from specified GitLab projects
+- **On-Premise Support**: Work with both GitLab.com and self-managed GitLab instances
+- **File Filtering**: Automatically filters out binary files and common ignore patterns
+- **Content Hashing**: Only syncs changed files based on SHA256 hashes
+
 
 ### Confluence Adapter
 
@@ -357,6 +383,8 @@ INFO[0001] Successfully synced file: PROJ-125.json
 - `OPENWEBUI_API_KEY`: OpenWebUI API key
 - `GITHUB_TOKEN`: GitHub personal access token
 - `GITHUB_KNOWLEDGE_ID`: OpenWebUI knowledge ID for GitHub files
+- `GITLAB_TOKEN`: GitLab personal access token
+- `GITLAB_BASE_URL`: GitLab base URL (for on-premise)
 - `CONFLUENCE_API_KEY`: Confluence API key
 - `CONFLUENCE_BASE_URL`: Confluence instance URL (optional, can be set in config)
 - `CONFLUENCE_USERNAME`: Confluence username (optional, can be set in config)
@@ -436,6 +464,9 @@ type Adapter interface {
   - Supports multiple repositories
   - File filtering and content hashing
   - Branch-based syncing
+- **GitLab Adapter**: Syncs files from GitLab projects
+  - Supports GitLab Cloud and On-Premise
+  - Recursive file fetching
 - **Confluence Adapter**: Syncs pages from Confluence spaces
   - Space-based syncing (all pages in space)
   - Parent page syncing (specific page and sub-pages)

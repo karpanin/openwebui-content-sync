@@ -28,6 +28,15 @@ github:
     - repository: "microsoft/vscode"
       knowledge_id: "vscode-knowledge-base"
 
+# GitLab adapter configuration
+gitlab:
+  enabled: false
+  # base_url: "https://gitlab.example.com" # Optional: for on-premise instances. Default is https://gitlab.com
+  token: ""  # Set via GITLAB_TOKEN environment variable
+  mappings:
+    - repository: "group/project"
+      knowledge_id: "gitlab-knowledge-base"
+
 # Confluence adapter configuration
 confluence:
   enabled: false

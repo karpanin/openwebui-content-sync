@@ -19,6 +19,7 @@ type Config struct {
 	Jira         JiraConfig        `yaml:"jira"`
 	LocalFolders LocalFolderConfig `yaml:"local_folders"`
 	Slack        SlackConfig       `yaml:"slack"`
+	GitLab       GitLabConfig      `yaml:"gitlab"`
 }
 
 // ScheduleConfig defines the sync schedule
@@ -64,6 +65,14 @@ type LocalFolderMapping struct {
 // GitHubConfig defines GitHub adapter settings
 type GitHubConfig struct {
 	Enabled  bool                `yaml:"enabled"`
+	Token    string              `yaml:"token"`
+	Mappings []RepositoryMapping `yaml:"mappings"` // Per-repository knowledge mappings
+}
+
+// GitLabConfig defines GitLab adapter settings
+type GitLabConfig struct {
+	Enabled  bool                `yaml:"enabled"`
+	BaseURL  string              `yaml:"base_url"`
 	Token    string              `yaml:"token"`
 	Mappings []RepositoryMapping `yaml:"mappings"` // Per-repository knowledge mappings
 }
@@ -154,6 +163,12 @@ func Load(path string) (*Config, error) {
 			Token:    getEnv("GITHUB_TOKEN", ""),
 			Mappings: []RepositoryMapping{},
 		},
+		GitLab: GitLabConfig{
+			Enabled:  false,
+			BaseURL:  "", // Default to https://gitlab.com
+			Token:    getEnv("GIT_LAB_TOKEN", ""),
+			Mappings: []RepositoryMapping{},
+		},
 		Confluence: ConfluenceConfig{
 			Type:               "cloud",
 			Enabled:            false,
@@ -221,6 +236,8 @@ func Load(path string) (*Config, error) {
 	cfg.OpenWebUI.BaseURL = getEnv("OPENWEBUI_BASE_URL", cfg.OpenWebUI.BaseURL)
 	cfg.OpenWebUI.APIKey = getEnv("OPENWEBUI_API_KEY", cfg.OpenWebUI.APIKey)
 	cfg.GitHub.Token = getEnv("GITHUB_TOKEN", cfg.GitHub.Token)
+	cfg.GitLab.Token = getEnv("GITLAB_TOKEN", cfg.GitLab.Token)
+	cfg.GitLab.BaseURL = getEnv("GITLAB_BASE_URL", cfg.GitLab.BaseURL)
 	cfg.Confluence.APIKey = getEnv("CONFLUENCE_API_KEY", cfg.Confluence.APIKey)
 	cfg.Jira.APIKey = getEnv("CONFLUENCE_API_KEY", cfg.Jira.APIKey)
 	cfg.Storage.Path = getEnv("STORAGE_PATH", cfg.Storage.Path)
