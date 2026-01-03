@@ -3,7 +3,9 @@ package adapter
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -21,10 +23,17 @@ type GitLabAdapter struct {
 	repositories []string
 	mappings     map[string]string // repository -> knowledge_id mapping
 	lastCommits  map[string]string // repository -> last commit hash
+	storagePath  string            // path to storage directory
+}
+
+// GitLabState represents the persisted state of the GitLab adapter
+type GitLabState struct {
+	LastCommits map[string]string `json:"last_commits"`
+	LastSync    time.Time         `json:"last_sync"`
 }
 
 // NewGitLabAdapter creates a new GitLab adapter
-func NewGitLabAdapter(cfg config.GitLabConfig) (*GitLabAdapter, error) {
+func NewGitLabAdapter(cfg config.GitLabConfig, storagePath string) (*GitLabAdapter, error) {
 	if cfg.Token == "" {
 		return nil, fmt.Errorf("GitLab token is required")
 	}
@@ -60,14 +69,22 @@ func NewGitLabAdapter(cfg config.GitLabConfig) (*GitLabAdapter, error) {
 		return nil, fmt.Errorf("at least one repository mapping must be configured")
 	}
 
-	return &GitLabAdapter{
+	adapter := &GitLabAdapter{
 		client:       client,
 		config:       cfg,
 		repositories: repos,
 		mappings:     mappings,
 		lastSync:     time.Now().Add(-24 * time.Hour), // Default to 24 hours ago
 		lastCommits:  make(map[string]string),
-	}, nil
+		storagePath:  storagePath,
+	}
+
+	// Load state from disk
+	if err := adapter.loadState(); err != nil {
+		logrus.Warnf("Failed to load GitLab adapter state: %v", err)
+	}
+
+	return adapter, nil
 }
 
 // Name returns the adapter name
@@ -120,9 +137,71 @@ func (g *GitLabAdapter) fetchRepositoryFiles(ctx context.Context, repo string, k
 	// Update the last commit hash after successful fetch
 	if latestCommit != "" {
 		g.lastCommits[repo] = latestCommit
+		if err := g.saveState(); err != nil {
+			logrus.Warnf("Failed to save GitLab state: %v", err)
+		}
 	}
 
 	return files, nil
+}
+
+// loadState loads the adapter state from disk
+func (g *GitLabAdapter) loadState() error {
+	if g.storagePath == "" {
+		return nil
+	}
+
+	statePath := filepath.Join(g.storagePath, "gitlab_state.json")
+	if _, err := os.Stat(statePath); os.IsNotExist(err) {
+		return nil
+	}
+
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return err
+	}
+
+	var state GitLabState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+
+	g.lastCommits = state.LastCommits
+	if !state.LastSync.IsZero() {
+		g.lastSync = state.LastSync
+	}
+	// Verify lastCommits map is not nil
+	if g.lastCommits == nil {
+		g.lastCommits = make(map[string]string)
+	}
+
+	logrus.Debugf("Loaded GitLab state: %d stored commits, last sync %v", len(g.lastCommits), g.lastSync)
+	return nil
+}
+
+// saveState saves the adapter state to disk
+func (g *GitLabAdapter) saveState() error {
+	if g.storagePath == "" {
+		return nil
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(g.storagePath, 0755); err != nil {
+		return err
+	}
+
+	state := GitLabState{
+		LastCommits: g.lastCommits,
+		LastSync:    g.lastSync,
+	}
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	statePath := filepath.Join(g.storagePath, "gitlab_state.json")
+	return os.WriteFile(statePath, data, 0644)
 }
 
 // getLatestCommit retrieves the SHA of the latest commit on the default branch

@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -32,6 +34,12 @@ type ConfluenceAdapter struct {
 	spaceMappings      map[string]string // space_key -> knowledge_id mapping
 	parentPageMappings map[string]string // parent_page_id -> knowledge_id mapping
 	spaceLabels        map[string][]string // space_key -> labels mapping
+	storagePath        string              // path to storage directory
+}
+
+// ConfluenceState represents the persisted state of the Confluence adapter
+type ConfluenceState struct {
+	LastSync time.Time `json:"last_sync"`
 }
 
 // ConfluenceSpace represents a space from Confluence API
@@ -199,7 +207,7 @@ type ConfluenceGroups struct {
 }
 
 // NewConfluenceAdapter creates a new Confluence adapter
-func NewConfluenceAdapter(cfg config.ConfluenceConfig) (*ConfluenceAdapter, error) {
+func NewConfluenceAdapter(cfg config.ConfluenceConfig, storagePath string) (*ConfluenceAdapter, error) {
 	if cfg.BaseURL == "" {
 		return nil, fmt.Errorf("confluence base URL is required")
 	}
@@ -245,7 +253,7 @@ func NewConfluenceAdapter(cfg config.ConfluenceConfig) (*ConfluenceAdapter, erro
 		Timeout: 30 * time.Second,
 	}
 
-	return &ConfluenceAdapter{
+	adapter := &ConfluenceAdapter{
 		client:             client,
 		config:             cfg,
 		spaces:             spaces,
@@ -253,8 +261,16 @@ func NewConfluenceAdapter(cfg config.ConfluenceConfig) (*ConfluenceAdapter, erro
 		spaceMappings:      spaceMappings,
 		parentPageMappings: parentPageMappings,
 		spaceLabels:        spaceLabels,
-		lastSync:           time.Now(),
-	}, nil
+		lastSync:           time.Time{}, // Zero time initially
+		storagePath:        storagePath,
+	}
+
+	// Load state from disk
+	if err := adapter.loadState(); err != nil {
+		logrus.Warnf("Failed to load Confluence adapter state: %v", err)
+	}
+
+	return adapter, nil
 }
 
 // Name returns the adapter name
@@ -285,26 +301,44 @@ func (c *ConfluenceAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 		for _, parentPageID := range c.parentPageIDs {
 			logrus.Debugf("Fetching files from Confluence parent page: %s", parentPageID)
 
-			// Step 1: Get the parent page details
-			parentPage, err := c.fetchPageByID(ctx, parentPageID)
-			if err != nil {
-				logrus.Errorf("Failed to fetch parent page %s: %v", parentPageID, err)
-				continue
+			var pages []ConfluencePage
+			// Check for incremental update
+			if !c.lastSync.IsZero() {
+				logrus.Debugf("Checking for incremental updates for parent page %s since %v", parentPageID, c.lastSync)
+				// Format: "2006-01-02 15:04"
+				lastMod := c.lastSync.Format("2006-01-02 15:04")
+				// Query: (id = "ID" OR parent = "ID") AND type = "page" AND lastModified > "TIME"
+				cql := fmt.Sprintf("(id = \"%s\" OR parent = \"%s\") AND type = \"page\" AND lastModified > \"%s\"", parentPageID, parentPageID, lastMod)
+
+				var err error
+				pages, err = c.fetchPagesByCQL(ctx, cql)
+				if err != nil {
+					logrus.Errorf("Failed to fetch incremental updates for parent page %s: %v", parentPageID, err)
+					continue
+				}
+				logrus.Debugf("Found %d updated pages under parent page %s", len(pages), parentPageID)
+			} else {
+				// Full sync logic
+				// Step 1: Get the parent page details
+				parentPage, err := c.fetchPageByID(ctx, parentPageID)
+				if err != nil {
+					logrus.Errorf("Failed to fetch parent page %s: %v", parentPageID, err)
+					continue
+				}
+
+				logrus.Debugf("Parent page: %s (Space: %s)", parentPage.Title, parentPage.SpaceID)
+
+				// Step 2: Fetch all sub-pages under this parent
+				subPages, err := c.fetchSubPages(ctx, parentPageID)
+				if err != nil {
+					logrus.Errorf("Failed to fetch sub-pages for parent %s: %v", parentPageID, err)
+					continue
+				}
+
+				// Include the parent page itself in the results
+				pages = append([]ConfluencePage{parentPage}, subPages...)
+				logrus.Debugf("Found %d pages under parent page %s", len(pages), parentPage.Title)
 			}
-
-			logrus.Debugf("Parent page: %s (Space: %s)", parentPage.Title, parentPage.SpaceID)
-
-			// Step 2: Fetch all sub-pages under this parent
-			pages, err := c.fetchSubPages(ctx, parentPageID)
-			if err != nil {
-				logrus.Errorf("Failed to fetch sub-pages for parent %s: %v", parentPageID, err)
-				continue
-			}
-
-			// Include the parent page itself in the results
-			pages = append([]ConfluencePage{parentPage}, pages...)
-
-			logrus.Debugf("Found %d pages under parent page %s", len(pages), parentPage.Title)
 
 			// Step 3: Process each page
 			knowledgeID := c.parentPageMappings[parentPageID]
@@ -338,11 +372,12 @@ func (c *ConfluenceAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 			var pages []ConfluencePage
 
 
-			// Check if we have labels configured for this space
-			if labels, ok := c.spaceLabels[spaceKey]; ok && len(labels) > 0 {
-				logrus.Debugf("Using label filtering for space %s: %v", spaceKey, labels)
+			useCQL := false
+			cqlParts := []string{fmt.Sprintf("space = \"%s\"", spaceKey), "type = \"page\""}
 
-				// Construct CQL query: space = "KEY" AND type = "page" AND label in ("label1", "label2")
+			// Check labels
+			if labels, ok := c.spaceLabels[spaceKey]; ok && len(labels) > 0 {
+				useCQL = true
 				labelList := ""
 				for i, label := range labels {
 					if i > 0 {
@@ -350,8 +385,20 @@ func (c *ConfluenceAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 					}
 					labelList += fmt.Sprintf("\"%s\"", label)
 				}
-				cql := fmt.Sprintf("space = \"%s\" AND type = \"page\" AND label in (%s)", spaceKey, labelList)
+				cqlParts = append(cqlParts, fmt.Sprintf("label in (%s)", labelList))
+			}
 
+			// Check incremental update
+			if !c.lastSync.IsZero() {
+				useCQL = true
+				lastMod := c.lastSync.Format("2006-01-02 15:04")
+				cqlParts = append(cqlParts, fmt.Sprintf("lastModified > \"%s\"", lastMod))
+				logrus.Debugf("Using incremental update for space %s since %s", spaceKey, lastMod)
+			}
+
+			if useCQL {
+				cql := strings.Join(cqlParts, " AND ")
+				logrus.Debugf("Fetching pages with CQL: %s", cql)
 				pages, err = c.fetchPagesByCQL(ctx, cql)
 			} else {
 				pages, err = c.fetchSpacePages(ctx, spaceID, spaceKey)
@@ -399,7 +446,63 @@ func (c *ConfluenceAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 	}
 
 	c.lastSync = time.Now()
+	if err := c.saveState(); err != nil {
+		logrus.Warnf("Failed to save Confluence state: %v", err)
+	}
 	return allFiles, nil
+}
+
+// loadState loads the adapter state from disk
+func (c *ConfluenceAdapter) loadState() error {
+	if c.storagePath == "" {
+		return nil
+	}
+
+	statePath := filepath.Join(c.storagePath, "confluence_state.json")
+	if _, err := os.Stat(statePath); os.IsNotExist(err) {
+		return nil
+	}
+
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		return err
+	}
+
+	var state ConfluenceState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+
+	if !state.LastSync.IsZero() {
+		c.lastSync = state.LastSync
+	}
+
+	logrus.Debugf("Loaded Confluence state: last sync %v", c.lastSync)
+	return nil
+}
+
+// saveState saves the adapter state to disk
+func (c *ConfluenceAdapter) saveState() error {
+	if c.storagePath == "" {
+		return nil
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(c.storagePath, 0755); err != nil {
+		return err
+	}
+
+	state := ConfluenceState{
+		LastSync: c.lastSync,
+	}
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	statePath := filepath.Join(c.storagePath, "confluence_state.json")
+	return os.WriteFile(statePath, data, 0644)
 }
 
 // getSpaceID retrieves the space ID from the space key

@@ -74,7 +74,7 @@ func TestNewGitLabAdapter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			adapter, err := NewGitLabAdapter(tt.config)
+			adapter, err := NewGitLabAdapter(tt.config, "")
 			if tt.expectError {
 				if err == nil {
 					t.Errorf("Expected error but got none")

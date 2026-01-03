@@ -56,7 +56,7 @@ func main() {
 
 	// Add GitHub adapter if configured
 	if cfg.GitHub.Enabled {
-		githubAdapter, err := adapter.NewGitHubAdapter(cfg.GitHub)
+		githubAdapter, err := adapter.NewGitHubAdapter(cfg.GitHub, cfg.Storage.Path)
 		if err != nil {
 			logrus.Fatalf("Failed to create GitHub adapter: %v", err)
 		}
@@ -65,7 +65,7 @@ func main() {
 
 	// Add GitLab adapter if configured
 	if cfg.GitLab.Enabled {
-		gitlabAdapter, err := adapter.NewGitLabAdapter(cfg.GitLab)
+		gitlabAdapter, err := adapter.NewGitLabAdapter(cfg.GitLab, cfg.Storage.Path)
 		if err != nil {
 			logrus.Fatalf("Failed to create GitLab adapter: %v", err)
 		}
@@ -74,7 +74,7 @@ func main() {
 
 	// Add Confluence adapter if configured
 	if cfg.Confluence.Enabled {
-		confluenceAdapter, err := adapter.NewConfluenceAdapter(cfg.Confluence)
+		confluenceAdapter, err := adapter.NewConfluenceAdapter(cfg.Confluence, cfg.Storage.Path)
 		if err != nil {
 			logrus.Fatalf("Failed to create Confluence adapter: %v", err)
 		}
