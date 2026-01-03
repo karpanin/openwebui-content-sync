@@ -183,6 +183,11 @@ confluence:
       knowledge_id: "docs-knowledge-base"
     - space_key: "PRODUCT"
       knowledge_id: "product-knowledge-base"
+    - space_key: "DEV"
+      knowledge_id: "dev-knowledge-base"
+      labels:
+        - "documentation"
+        - "public"
 
   # Optional: Set type to "datacenter" for on-premise instances (default: "cloud")
   # type: "datacenter"
@@ -208,6 +213,7 @@ confluence:
 - **HTML to Text**: Converts Confluence HTML content to plain text
 - **Filename Sanitization**: Converts page titles to safe filenames (e.g., "Call Summary Best Practices" → `call_summary_best_practices.txt`)
 - **Content Formatting**: Includes webui links and page content in uploaded files
+- **Label Filtering**: Filter pages by labels to only sync relevant content
 
 #### Confluence Example Output
 

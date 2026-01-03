@@ -319,3 +319,70 @@ func (c *ConfluenceAdapter) mapContentV1ToBlogPost(content ConfluenceContentV1) 
 		Links: content.Links,
 	}
 }
+
+// fetchPagesByCQL fetches pages using CQL (Confluence Query Language)
+// This is used for both Cloud (via V1 API) and Data Center
+func (c *ConfluenceAdapter) fetchPagesByCQL(ctx context.Context, cql string) ([]ConfluencePage, error) {
+	var allPages []ConfluencePage
+	limit := c.config.PageLimit
+	if limit <= 0 {
+		limit = 100 // Default limit
+	}
+	start := 0
+
+	// Determine the base API path for search
+	// Cloud: /wiki/rest/api/content/search
+	// Data Center: /rest/api/content/search
+	apiPath := "/rest/api/content/search"
+	if c.config.Type != "datacenter" {
+		apiPath = "/wiki" + apiPath
+	}
+
+	for {
+		qs := url.Values{}
+		qs.Set("cql", cql)
+		qs.Set("limit", fmt.Sprintf("%d", limit))
+		qs.Set("start", fmt.Sprintf("%d", start))
+		qs.Set("expand", "history.createdBy,version,space")
+
+		fullURL := fmt.Sprintf("%s%s?%s", c.config.BaseURL, apiPath, qs.Encode())
+
+		req, err := http.NewRequestWithContext(ctx, "GET", fullURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		c.setAuth(req)
+		req.Header.Set("Accept", "application/json")
+
+		logrus.Debugf("Confluence CQL search API URL: %s", fullURL)
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to make request: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("API request failed with status %d: response body omitted", resp.StatusCode)
+		}
+
+		var contentList ConfluenceContentListV1
+		if err := json.NewDecoder(resp.Body).Decode(&contentList); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+		resp.Body.Close()
+
+		for _, item := range contentList.Results {
+			allPages = append(allPages, c.mapContentV1ToPage(item))
+		}
+
+		if len(contentList.Results) < limit {
+			break
+		}
+		start += len(contentList.Results)
+	}
+
+	return allPages, nil
+}

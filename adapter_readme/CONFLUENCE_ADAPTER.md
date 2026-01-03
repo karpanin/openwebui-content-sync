@@ -29,6 +29,7 @@ For **Data Center** (API v1), it provides:
 - **Incremental Sync**: Tracks last sync time to avoid re-processing content
 - **Multi-Space Support**: Can sync from multiple Confluence spaces
 - **Configurable Limits**: Set page limits and control attachment inclusion
+- **Label Filtering**: Filter pages by specific labels (e.g., "documentation", "public")
 - **Cursor-based Pagination**: Uses modern cursor-based pagination for efficient data retrieval
 
 ## Configuration
@@ -81,6 +82,11 @@ data:
       spaces:
         - "SPACEKEY1"
         - "SPACEKEY2"
+      # Or use space_mappings for more control including labels
+      space_mappings:
+        - space_key: "SPACEKEY1"
+          knowledge_id: "kb-1"
+          labels: ["documentation"]
       knowledge_id: "your-knowledge-base-id"
       page_limit: 100
       include_attachments: true
@@ -125,8 +131,9 @@ Uses **Bearer Token Authentication** with a Personal Access Token (PAT).
 | `base_url` | string | Yes | - | Your Confluence instance URL (e.g., `https://your-domain.atlassian.net`) |
 | `username` | string | Yes | - | Your Confluence username (usually your email) |
 | `api_key` | string | Yes | - | Your Confluence API key |
-| `spaces` | array | Yes | - | List of Confluence space keys to sync |
-| `knowledge_id` | string | No | - | OpenWebUI knowledge base ID to sync content to |
+| `spaces` | array | Yes | - | List of Confluence space keys to sync (deprecated in favor of `space_mappings` for advanced features) |
+| `space_mappings` | array | No | - | List of space mappings, allowing per-space `knowledge_id` and `labels` |
+| `knowledge_id` | string | No | - | Default OpenWebUI knowledge base ID to sync content to (used if not specified in mapping) |
 | `page_limit` | integer | No | `100` | Maximum number of pages to fetch per space |
 | `include_attachments` | boolean | No | `true` | Whether to download and sync page attachments |
 | `include_blog_posts` | boolean | No | `false` | Whether to download and sync blog posts |
@@ -244,6 +251,14 @@ confluence:
   knowledge_id: "fbc18bc4-72c1-40f0-84b1-52055368c583"
   page_limit: 500
   include_attachments: true
+
+  # Advanced mappings with labels
+  space_mappings:
+    - space_key: "DOCS"
+      knowledge_id: "docs-kb"
+      labels:
+        - "official"
+        - "release-notes"
 ```
 
 This configuration will sync up to 500 pages from each of the three specified spaces, including all text-based attachments.

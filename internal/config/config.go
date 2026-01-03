@@ -46,8 +46,9 @@ type RepositoryMapping struct {
 
 // SpaceMapping defines a mapping between a Confluence space and a knowledge base
 type SpaceMapping struct {
-	SpaceKey    string `yaml:"space_key"`
-	KnowledgeID string `yaml:"knowledge_id"`
+	SpaceKey    string   `yaml:"space_key"`
+	KnowledgeID string   `yaml:"knowledge_id"`
+	Labels      []string `yaml:"labels"` // Optional: Filter pages by labels
 }
 
 // ParentPageMapping defines a mapping between a Confluence parent page and a knowledge base

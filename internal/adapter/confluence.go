@@ -31,6 +31,7 @@ type ConfluenceAdapter struct {
 	parentPageIDs      []string
 	spaceMappings      map[string]string // space_key -> knowledge_id mapping
 	parentPageMappings map[string]string // parent_page_id -> knowledge_id mapping
+	spaceLabels        map[string][]string // space_key -> labels mapping
 }
 
 // ConfluenceSpace represents a space from Confluence API
@@ -211,6 +212,7 @@ func NewConfluenceAdapter(cfg config.ConfluenceConfig) (*ConfluenceAdapter, erro
 
 	// Build space and parent page mappings
 	spaceMappings := make(map[string]string)
+	spaceLabels := make(map[string][]string)
 	parentPageMappings := make(map[string]string)
 	spaces := []string{}
 	parentPageIDs := []string{}
@@ -220,6 +222,9 @@ func NewConfluenceAdapter(cfg config.ConfluenceConfig) (*ConfluenceAdapter, erro
 		if mapping.SpaceKey != "" && mapping.KnowledgeID != "" {
 			spaceMappings[mapping.SpaceKey] = mapping.KnowledgeID
 			spaces = append(spaces, mapping.SpaceKey)
+			if len(mapping.Labels) > 0 {
+				spaceLabels[mapping.SpaceKey] = mapping.Labels
+			}
 		}
 	}
 
@@ -247,6 +252,7 @@ func NewConfluenceAdapter(cfg config.ConfluenceConfig) (*ConfluenceAdapter, erro
 		parentPageIDs:      parentPageIDs,
 		spaceMappings:      spaceMappings,
 		parentPageMappings: parentPageMappings,
+		spaceLabels:        spaceLabels,
 		lastSync:           time.Now(),
 	}, nil
 }
@@ -329,7 +335,28 @@ func (c *ConfluenceAdapter) FetchFiles(ctx context.Context) ([]*File, error) {
 			logrus.Debugf("Space %s has ID: %s", spaceKey, spaceID)
 
 			// Step 2: Fetch pages from the space
-			pages, err := c.fetchSpacePages(ctx, spaceID, spaceKey)
+			var pages []ConfluencePage
+
+
+			// Check if we have labels configured for this space
+			if labels, ok := c.spaceLabels[spaceKey]; ok && len(labels) > 0 {
+				logrus.Debugf("Using label filtering for space %s: %v", spaceKey, labels)
+
+				// Construct CQL query: space = "KEY" AND type = "page" AND label in ("label1", "label2")
+				labelList := ""
+				for i, label := range labels {
+					if i > 0 {
+						labelList += ", "
+					}
+					labelList += fmt.Sprintf("\"%s\"", label)
+				}
+				cql := fmt.Sprintf("space = \"%s\" AND type = \"page\" AND label in (%s)", spaceKey, labelList)
+
+				pages, err = c.fetchPagesByCQL(ctx, cql)
+			} else {
+				pages, err = c.fetchSpacePages(ctx, spaceID, spaceKey)
+			}
+
 			if err != nil {
 				logrus.Errorf("Failed to fetch pages from space %s: %v", spaceKey, err)
 				continue
