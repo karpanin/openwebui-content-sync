@@ -33,8 +33,13 @@ func NewGitLabAdapter(cfg config.GitLabConfig) (*GitLabAdapter, error) {
 	var err error
 
 	if cfg.BaseURL != "" {
-		// On-premise GitLab
-		client, err = gitlab.NewClient(cfg.Token, gitlab.WithBaseURL(cfg.BaseURL))
+		// On-premise GitLab - ensure it ends with /api/v4
+		baseURL := strings.TrimSuffix(cfg.BaseURL, "/")
+		if !strings.HasSuffix(baseURL, "/api/v4") {
+			baseURL = baseURL + "/api/v4"
+			logrus.Infof("Normalized GitLab BaseURL to: %s", baseURL)
+		}
+		client, err = gitlab.NewClient(cfg.Token, gitlab.WithBaseURL(baseURL))
 	} else {
 		// Cloud GitLab
 		client, err = gitlab.NewClient(cfg.Token)
@@ -104,12 +109,13 @@ func (g *GitLabAdapter) fetchRepositoryFiles(ctx context.Context, repo string, k
 	if err != nil {
 		logrus.Warnf("Failed to get latest commit for %s: %v. Proceeding with full fetch.", repo, err)
 	} else {
+		logrus.Infof("Latest commit for repository %s is %s", repo, latestCommit)
 		// If we have a stored commit and it matches the latest, skip fetch
 		if lastCommit, ok := g.lastCommits[repo]; ok && lastCommit == latestCommit {
-			logrus.Debugf("Repository %s is up to date (commit: %s). Skipping fetch.", repo, latestCommit)
+			logrus.Infof("Repository %s is up to date (commit: %s). Skipping fetch.", repo, latestCommit)
 			return []*File{}, nil
 		}
-		logrus.Debugf("Repository %s has updates (old: %s, new: %s). Fetching files.", repo, g.lastCommits[repo], latestCommit)
+		logrus.Infof("Repository %s has updates (old: %s, new: %s). Fetching files.", repo, g.lastCommits[repo], latestCommit)
 	}
 
 	files, err := g.processDirectory(ctx, repo, "", knowledgeID)
@@ -159,10 +165,14 @@ func (g *GitLabAdapter) processDirectory(ctx context.Context, projectID, path st
 			return nil, fmt.Errorf("failed to list tree for project %s path %s: %w", projectID, path, err)
 		}
 
+		logrus.Infof("GitLab ListTree for %s path '%s' returned %d nodes", projectID, path, len(nodes))
+
 		for _, node := range nodes {
+			logrus.Infof("Processing GitLab node: Name=%s, Type=%s, Path=%s", node.Name, node.Type, node.Path)
 			// Skip binary files and non-text files if it's a file
 			if node.Type == "blob" {
 				if !isGitLabTextFile(node.Name) {
+					logrus.Infof("Skipping non-text GitLab file: %s", node.Name)
 					continue
 				}
 

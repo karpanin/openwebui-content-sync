@@ -60,6 +60,8 @@ func IsRetryableError(err error) bool {
 		"ratelimited",
 		"429",
 		"too_many_requests",
+		"deadline exceeded",
+		"context deadline exceeded",
 	}
 
 	// Check for permanent errors that should NOT be retried

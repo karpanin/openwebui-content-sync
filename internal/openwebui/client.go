@@ -224,7 +224,7 @@ func (c *Client) ListKnowledge(ctx context.Context) ([]*Knowledge, error) {
 	return knowledge, nil
 }
 
-// AddFileToKnowledge adds a file to a knowledge source
+// AddFileToKnowledge adds a file to a knowledge source with retry logic
 func (c *Client) AddFileToKnowledge(ctx context.Context, knowledgeID, fileID string) error {
 	url := fmt.Sprintf("%s/api/v1/knowledge/%s/file/add", c.baseURL, knowledgeID)
 
@@ -240,45 +240,63 @@ func (c *Client) AddFileToKnowledge(ctx context.Context, knowledgeID, fileID str
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	// logrus.Debugf("Add file payload: %s", string(jsonData))
+	retryConfig := utils.RetryConfig{
+		MaxRetries: 5,
+		BaseDelay:  2 * time.Second,
+		MaxDelay:   60 * time.Second,
+		Multiplier: 2.0,
+	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	var lastErr error
+	err = utils.RetryWithBackoff(ctx, retryConfig, func() error {
+		// Create a new request for each retry (context may have been refreshed)
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		if c.apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		}
+
+		logrus.Debugf("Sending add file to knowledge request...")
+		resp, err := c.client.Do(req)
+		if err != nil {
+			lastErr = err
+			return err
+		}
+		defer resp.Body.Close()
+
+		logrus.Debugf("Add file to knowledge response status: %d %s", resp.StatusCode, resp.Status)
+
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			logrus.Errorf("Add file to knowledge failed with status %d: %s", resp.StatusCode, string(body))
+			lastErr = fmt.Errorf("add file to knowledge failed with status %d: %s", resp.StatusCode, string(body))
+			// Make 5xx errors retryable
+			if resp.StatusCode >= 500 {
+				return lastErr
+			}
+			return lastErr
+		}
+
+		// Read response body for debugging
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			logrus.Warnf("Failed to read add file response body: %v", err)
+		} else {
+			logrus.Debugf("Add file to knowledge response body: %s", string(body))
+		}
+
+		logrus.Debugf("Successfully added file %s to knowledge %s", fileID, knowledgeID)
+		return nil
+	})
+
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to add file to knowledge after retries: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		logrus.Debugf("Using API key for add file request")
-	} else {
-		logrus.Debugf("No API key provided for add file request")
-	}
-
-	logrus.Debugf("Sending add file to knowledge request...")
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	logrus.Debugf("Add file to knowledge response status: %d %s", resp.StatusCode, resp.Status)
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		logrus.Errorf("Add file to knowledge failed with status %d: %s", resp.StatusCode, string(body))
-		return fmt.Errorf("add file to knowledge failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Read response body for debugging
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logrus.Warnf("Failed to read add file response body: %v", err)
-	} else {
-		logrus.Debugf("Add file to knowledge response body: %s", string(body))
-	}
-
-	logrus.Debugf("Successfully added file %s to knowledge %s", fileID, knowledgeID)
 	return nil
 }
 

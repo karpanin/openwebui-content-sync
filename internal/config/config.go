@@ -167,7 +167,7 @@ func Load(path string) (*Config, error) {
 		GitLab: GitLabConfig{
 			Enabled:  false,
 			BaseURL:  "", // Default to https://gitlab.com
-			Token:    getEnv("GIT_LAB_TOKEN", ""),
+			Token:    getEnv("GIT_LAB_TOKEN", getEnv("GITLAB_TOKEN", "")),
 			Mappings: []RepositoryMapping{},
 		},
 		Confluence: ConfluenceConfig{
@@ -237,10 +237,10 @@ func Load(path string) (*Config, error) {
 	cfg.OpenWebUI.BaseURL = getEnv("OPENWEBUI_BASE_URL", cfg.OpenWebUI.BaseURL)
 	cfg.OpenWebUI.APIKey = getEnv("OPENWEBUI_API_KEY", cfg.OpenWebUI.APIKey)
 	cfg.GitHub.Token = getEnv("GITHUB_TOKEN", cfg.GitHub.Token)
-	cfg.GitLab.Token = getEnv("GITLAB_TOKEN", cfg.GitLab.Token)
+	cfg.GitLab.Token = getEnv("GITLAB_TOKEN", getEnv("GIT_LAB_TOKEN", cfg.GitLab.Token))
 	cfg.GitLab.BaseURL = getEnv("GITLAB_BASE_URL", cfg.GitLab.BaseURL)
 	cfg.Confluence.APIKey = getEnv("CONFLUENCE_API_KEY", cfg.Confluence.APIKey)
-	cfg.Jira.APIKey = getEnv("CONFLUENCE_API_KEY", cfg.Jira.APIKey)
+	cfg.Jira.APIKey = getEnv("JIRA_API_KEY", cfg.Jira.APIKey)
 	cfg.Storage.Path = getEnv("STORAGE_PATH", cfg.Storage.Path)
 
 	fmt.Printf("Final OpenWebUI BaseURL: %s\n", cfg.OpenWebUI.BaseURL)
