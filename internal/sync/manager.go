@@ -213,26 +213,32 @@ func (m *Manager) SyncFiles(ctx context.Context, adapters []adapter.Adapter) err
 
 		logrus.Debugf("Fetched %d files from adapter %s", len(files), adpt.Name())
 
+		successCount := 0
+		failCount := 0
 		for _, file := range files {
-			// Check if context is cancelled before processing each file
-			select {
-			case <-ctx.Done():
-				logrus.Info("Sync cancelled, stopping file synchronization")
-				return ctx.Err()
-			default:
-			}
-
 			filename := filepath.Base(file.Path)
 			currentFiles[filename] = true // Track by filename to match OpenWebUI behavior
 
-			if err := m.syncFile(ctx, file, adpt.Name()); err != nil {
+			// Create a per-file context with a generous timeout (10 minutes per file)
+			// This prevents one slow file from cancelling all remaining files
+			fileCtx, fileCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+
+			if err := m.syncFile(fileCtx, file, adpt.Name()); err != nil {
 				logrus.Errorf("Failed to sync file %s: %v", file.Path, err)
+				failCount++
+				fileCancel()
 				continue
 			}
+			fileCancel()
+			successCount++
 		}
 
-		// Update last sync time
-		adpt.SetLastSync(time.Now())
+		logrus.Infof("Adapter %s: synced %d files, failed %d files", adpt.Name(), successCount, failCount)
+
+		// Update last sync time only if at least some files succeeded
+		if successCount > 0 {
+			adpt.SetLastSync(time.Now())
+		}
 	}
 
 	// Clean up orphaned files (files that are no longer in repositories)

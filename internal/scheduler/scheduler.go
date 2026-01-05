@@ -57,7 +57,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 // RunSyncWithContext runs a synchronization cycle with the provided context
 func (s *Scheduler) RunSyncWithContext(ctx context.Context) error {
 	// Create a timeout context, but make it respect the parent context cancellation
-	syncCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	syncCtx, cancel := context.WithTimeout(ctx, 6*time.Hour)
 	defer cancel()
 
 	return s.syncManager.SyncFiles(syncCtx, s.adapters)
